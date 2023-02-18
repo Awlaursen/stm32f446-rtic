@@ -11,17 +11,23 @@ mod app {
         prelude::*,
     };
 
+    // Needed for scheduling monotonic tasks
     #[monotonic(binds = SysTick, default = true)]
     type MyMono = DwtSystick<48_000_000>; // 48 MHz
 
+    // Holds the shared resources (used by multiple tasks)
+    // Needed even if we don't use it
     #[shared]
     struct Shared {}
 
+    // Holds the local resources (used by a single task)
+    // Needed even if we don't use it
     #[local]
     struct Local {
         led: PA5<Output<PushPull>>,
     }
 
+    // The init function is called in the beginning of the program
     #[init]
     fn init(ctx: init::Context) -> (Shared, Local, init::Monotonics) {
         // Cortex-M peripherals
@@ -38,7 +44,7 @@ mod app {
         let rcc = _device.RCC.constrain();
         let clocks = rcc.cfgr.sysclk(48.MHz()).freeze();
 
-        // Set up the LED. On the Nucleo-F446RE it's connected to pin LD2 (PA5).
+        // Set up the LED. On the Nucleo-F446RE it's connected to pin PA5.
         let gpioa = _device.GPIOA.split();
         let led = gpioa.pa5.into_push_pull_output();
 
@@ -54,6 +60,7 @@ mod app {
         (Shared {}, Local { led }, init::Monotonics(mono))
     }
 
+    // The idle function is called when there is nothing else to do
     #[idle]
     fn idle(_: idle::Context) -> ! {
         loop {
@@ -61,6 +68,7 @@ mod app {
         }
     }
 
+    // The task functions are called by the scheduler
     #[task(local = [led])]
     fn blink(ctx: blink::Context) {
         ctx.local.led.toggle();
