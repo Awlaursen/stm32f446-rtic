@@ -30,15 +30,13 @@ mod app {
     // The init function is called in the beginning of the program
     #[init]
     fn init(ctx: init::Context) -> (Shared, Local, init::Monotonics) {
+        defmt::info!("init");
+
         // Cortex-M peripherals
         let mut _core : cortex_m::Peripherals = ctx.core;
 
         // Device specific peripherals
         let mut _device : stm32f4xx_hal::pac::Peripherals = ctx.device;
-
-        // enable tracing and the cycle counter for the monotonic timer
-        _core.DCB.enable_trace();
-        _core.DWT.enable_cycle_counter();
 
         // Set up the system clock.
         let rcc = _device.RCC.constrain();
@@ -48,6 +46,11 @@ mod app {
         let gpioa = _device.GPIOA.split();
         let led = gpioa.pa5.into_push_pull_output();
 
+        // enable tracing and the cycle counter for the monotonic timer
+        _core.DCB.enable_trace();
+        _core.DWT.enable_cycle_counter();
+
+        // Set up the monotonic timer
         let mono = DwtSystick::new(
             &mut _core.DCB,
             _core.DWT,
@@ -55,7 +58,7 @@ mod app {
             clocks.hclk().to_Hz(),
         );
 
-        defmt::info!("Hello world!");
+        defmt::info!("Init done!");
         blink::spawn_after(1.secs()).ok();
         (Shared {}, Local { led }, init::Monotonics(mono))
     }
