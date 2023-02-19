@@ -25,7 +25,7 @@ mod app {
     #[local]
     struct Local {
         led: Pin<'A', 5, Output<PushPull>>,
-        pin: Pin<'C', 13, Input>,
+        button: Pin<'C', 13, Input>,
     }
 
     #[monotonic(binds = SysTick, default = true)]
@@ -51,13 +51,13 @@ mod app {
 
         // Set up the button. On the Nucleo-F446RE it's connected to pin PC13.
         let gpioc = _device.GPIOC.split();
-        let mut pin = gpioc.pc13.into_pull_up_input();
+        let mut button = gpioc.pc13.into_floating_input();
 
         // Enable interrupts on the button
         let mut sys_cfg = _device.SYSCFG.constrain();
-        pin.make_interrupt_source(&mut sys_cfg);
-        pin.enable_interrupt(&mut _device.EXTI);
-        pin.trigger_on_edge(&mut _device.EXTI, Edge::Rising);
+        button.make_interrupt_source(&mut sys_cfg);
+        button.enable_interrupt(&mut _device.EXTI);
+        button.trigger_on_edge(&mut _device.EXTI, Edge::Falling);
 
         // enable tracing and the cycle counter for the monotonic timer
         _core.DCB.enable_trace();
@@ -71,24 +71,34 @@ mod app {
             _clocks.hclk().to_Hz(),
         );
 
-        rtic::pend(Interrupt::EXTI0);
-
         blink::spawn().ok();
 
-        (Shared {}, Local { pin, led }, init::Monotonics(mono))
+        (Shared {}, Local { button, led }, init::Monotonics(mono))
+    }
+
+    // The idle function is called when there is nothing else to do
+    #[idle]
+    fn idle(ctx: idle::Context) -> ! {
+        loop {
+            continue;
+        }
     }
 
     #[task(local = [led], priority = 4)]
     fn blink(ctx: blink::Context) {
+        // reset the counter and get the old value.
         let count = COUNTER.swap(0, Ordering::SeqCst);
         defmt::info!("{}", count);
         ctx.local.led.toggle();
         blink::spawn_after(1.secs()).ok();
     }
 
-    #[task(binds = EXTI0, local = [pin])]
+    // This is the interrupt handler for the button, it is bound to the EXTI15_10 interrupt
+    // as the the button is connected to pin PC13 and 13 is in the range 10-15.
+    #[task(binds = EXTI15_10, local = [button])]
     fn on_exti(ctx: on_exti::Context) {
-        ctx.local.pin.clear_interrupt_pending_bit();
+        // Clear the interrupt pending bit as rtic does not do this automatically.
+        ctx.local.button.clear_interrupt_pending_bit();
         defmt::info!("incrementing");
         COUNTER.fetch_add(1, Ordering::SeqCst);
     }
