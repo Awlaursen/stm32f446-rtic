@@ -16,6 +16,7 @@ dwt-systick-monotonic = "1.1.0" # Monotonic timer
 rtic-monotonic = "1" # Monotonic timer for RTIC
 fugit = "0.3.6" # Time library for abstraction of time units
 heapless = "0.7.16" # Heapless data structures alternative to std
+bxcan = "0.7.0"
 
 [dependencies.cortex-m] # Cortex-M core peripherals
 version = "0.7.4"
