@@ -6,10 +6,11 @@ use stm32f446_rtic as _; // global logger + panicking-behavior + memory layout
 #[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [USART1])]
 mod app {
     use dwt_systick_monotonic::{DwtSystick, ExtU32};
+    use core::sync::atomic::{AtomicUsize, Ordering};
     use stm32f4xx_hal::{
         can::Can,
-        gpio,
-        gpio::{gpioa::PA5, Output, PushPull, Alternate},
+        gpio::{self, gpioa::PA5, gpiob::{PB9, PB8}, Output, PushPull, Alternate},
+        pac::CAN1,
         prelude::*,
     };
     use bxcan::filter::Mask32;
@@ -23,7 +24,7 @@ mod app {
     // Needed even if we don't use it
     #[shared]
     struct Shared {
-        can: bxcan::Can<Can<stm32f4xx_hal::pac::CAN1, (gpio::Pin<'B', 9, Alternate<9>>, gpio::Pin<'B', 8, Alternate<9>>)>>
+        can: bxcan::Can<Can<CAN1, (PB9<Alternate<9>>, PB8<Alternate<9>>)>>
         // can: bxcan::Can<>
     }
 
@@ -32,8 +33,11 @@ mod app {
     #[local]
     struct Local {
         led: PA5<Output<PushPull>>,
-
+        test_frame: [u8; 8],
     }
+
+    // Atomic counter
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     // The init function is called in the beginning of the program
     #[init]
@@ -54,6 +58,15 @@ mod app {
         let gpioa = _device.GPIOA.split();
         let led = gpioa.pa5.into_push_pull_output();
 
+        // Initialize variables for can_send
+        let mut test_frame: [u8;8] = [0;8];
+        test_frame[1] = 1;
+        test_frame[2] = 2;
+        test_frame[3] = 3;
+        test_frame[4] = 4;
+        test_frame[5] = 5;
+        test_frame[6] = 6;
+        test_frame[7] = 7;
 
         // Set up CAN device 1.
         let gpiob = _device.GPIOB.split();
@@ -76,30 +89,30 @@ mod app {
         let mut filters = can1.modify_filters();
         filters.enable_bank(0, Fifo::Fifo0, Mask32::accept_all());
 
-        let _can2 = {
-            let tx = gpiob.pb13.into_alternate();
-            let rx = gpiob.pb12.into_alternate();
+        // let _can2 = {
+        //     let tx = gpiob.pb13.into_alternate();
+        //     let rx = gpiob.pb12.into_alternate();
 
-            let can = _device.CAN2.can((tx, rx));
+        //     let can = _device.CAN2.can((tx, rx));
 
-            let can2 = bxcan::Can::builder(can)
-                // APB1 (PCLK1): 8MHz, Bit rate: 500kBit/s, Sample Point 87.5%
-                // Value was calculated with http://www.bittiming.can-wiki.info/
-                .set_bit_timing(0x001c_0000)
-                .enable();
+        //     let can2 = bxcan::Can::builder(can)
+        //         // APB1 (PCLK1): 8MHz, Bit rate: 500kBit/s, Sample Point 87.5%
+        //         // Value was calculated with http://www.bittiming.can-wiki.info/
+        //         .set_bit_timing(0x001c_0000)
+        //         .enable();
 
-            // A total of 28 filters are shared between the two CAN instances.
-            // Split them equally between CAN1 and CAN2.
-            filters.set_split(14);
-            let mut slave_filters = filters.slave_filters();
-            slave_filters.enable_bank(14, Fifo::Fifo0, Mask32::accept_all());
-            can2
-        };
+        //     // A total of 28 filters are shared between the two CAN instances.
+        //     // Split them equally between CAN1 and CAN2.
+        //     filters.set_split(14);
+        //     let mut slave_filters = filters.slave_filters();
+        //     slave_filters.enable_bank(14, Fifo::Fifo0, Mask32::accept_all());
+        //     can2
+        // };
 
         // Drop filters to leave filter configuraiton mode.
         drop(filters);
 
-        let mut can = can1;
+        let can = can1;
 
         // enable tracing and the cycle counter for the monotonic timer
         _core.DCB.enable_trace();
@@ -115,7 +128,8 @@ mod app {
 
         defmt::info!("Init done!");
         blink::spawn_after(1.secs()).ok();
-        (Shared { can }, Local { led }, init::Monotonics(mono))
+        can_send::spawn_after(1.secs()).ok();
+        (Shared { can }, Local { led, test_frame }, init::Monotonics(mono))
     }
 
     // The idle function is called when there is nothing else to do
@@ -135,33 +149,29 @@ mod app {
     }
 
     // send a meesage via CAN
-    #[task(shared = [can])]
+    #[task(shared = [can], local = [test_frame],priority=1)]
     fn can_send(mut ctx: can_send::Context){
-        let mut test: [u8; 8] = [0; 8];
-        let mut count: u8 = 0;
+        let mut test_frame = ctx.local.test_frame;
         let id: u16 = 0x500;
 
-        test[1] = 1;
-        test[2] = 2;
-        test[3] = 3;
-        test[4] = 4;
-        test[5] = 5;
-        test[6] = 6;
-        test[7] = 7;
+        test_frame[1] = 1;
+        test_frame[2] = 2;
+        test_frame[3] = 3;
+        test_frame[4] = 4;
+        test_frame[5] = 5;
+        test_frame[6] = 6;
+        test_frame[7] = 7;
 
-        test[0] = count;
-        let test_frame = Frame::new_data(StandardId::new(id).unwrap(), test);
-        // block!(can.transmit(&test_frame)).unwrap();
+        test_frame[0] = COUNTER.fetch_add(1, Ordering::SeqCst) as u8;
+        let frame = Frame::new_data(StandardId::new(id).unwrap(), *test_frame);
+        
+        defmt::info!("Sending frame with first byte: {}", test_frame[0]);
 
         ctx.shared.can.lock(|can| {
-            can.transmit(&test_frame).unwrap()
+            can.transmit(&frame).unwrap()
         });
 
-        if count < 255 {
-            count += 1;
-        } else {
-            count = 0;
-        }
+        can_send::spawn_after(1.secs()).ok();
 
     }
 }
