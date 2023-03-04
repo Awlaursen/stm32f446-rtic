@@ -4,3 +4,6 @@
 
 # IntelliJ IDEA
 /.idea/
+
+# Visual Studio Code
+.vscode/.cortex-debug*.json

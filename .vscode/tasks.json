@@ -58,6 +58,6 @@
             "args": ["clean"],
             "problemMatcher": [],
             "group": "build"
-        },
+        }
     ]
 }
