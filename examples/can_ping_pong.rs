@@ -23,7 +23,7 @@ mod app {
 
     // Needed for scheduling monotonic tasks
     #[monotonic(binds = SysTick, default = true)]
-    type MyMono = DwtSystick<45_000_000>; // 180 MHz
+    type MyMono = DwtSystick<180_000_000>; // 180 MHz
 
     // Holds the shared resources (used by multiple tasks)
     // Needed even if we don't use it
@@ -56,7 +56,7 @@ mod app {
 
         // Set up the system clock.
         let rcc = _device.RCC.constrain();
-        let clocks = rcc.cfgr.sysclk(45.MHz()).freeze(); // Important: 45 MHz is the max for CAN since it has to match the APB1 clock
+        let clocks = rcc.cfgr.sysclk(180.MHz()).freeze(); // Important: 45 MHz is the max for CAN since it has to match the APB1 clock
 
         debug!("AHB1 clock: {} Hz", clocks.hclk().to_Hz());
         debug!("APB1 clock: {} Hz", clocks.pclk1().to_Hz());
@@ -67,13 +67,13 @@ mod app {
 
         // Initialize variables for can_send
         let mut test_frame: [u8; 8] = [0; 8];
-        test_frame[1] = 1;
-        test_frame[2] = 2;
-        test_frame[3] = 3;
-        test_frame[4] = 4;
-        test_frame[5] = 5;
-        test_frame[6] = 6;
-        test_frame[7] = 7;
+        test_frame[0] = 'H' as u8;
+        test_frame[1] = 'e' as u8;
+        test_frame[2] = 'j' as u8;
+        test_frame[3] = 's' as u8;
+        test_frame[4] = 'a' as u8;
+        test_frame[5] = '!' as u8;
+        test_frame[6] = ' ' as u8;
 
         // Set up CAN device 1
         let mut can1 = {
@@ -146,7 +146,7 @@ mod app {
         let test_frame = ctx.local.test_frame;
         let id: u16 = 0x500;
 
-        test_frame[0] = COUNTER.fetch_add(1, Ordering::SeqCst) as u8;
+        test_frame[7] = COUNTER.fetch_add(1, Ordering::SeqCst) as u8;
         let frame = Frame::new_data(StandardId::new(id).unwrap(), *test_frame);
 
         info!("Sending frame with first byte: {}", test_frame[0]);

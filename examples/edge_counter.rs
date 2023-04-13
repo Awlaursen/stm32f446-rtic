@@ -35,7 +35,7 @@ mod app {
     type MyMono = DwtSystick<48_000_000>; // 48 MHz
 
     #[init]
-    fn init(mut ctx: init::Context) -> (Shared, Local, init::Monotonics) {
+    fn init(ctx: init::Context) -> (Shared, Local, init::Monotonics) {
         defmt::info!("init");
 
         // Cortex-M peripherals
@@ -74,7 +74,7 @@ mod app {
             _clocks.hclk().to_Hz(),
         );
 
-        let mut exti = _device.EXTI;
+        let exti = _device.EXTI;
 
         blink::spawn().ok();
 
@@ -83,7 +83,7 @@ mod app {
 
     // The idle function is called when there is nothing else to do
     #[idle]
-    fn idle(ctx: idle::Context) -> ! {
+    fn idle(_: idle::Context) -> ! {
         loop {
             continue;
         }
