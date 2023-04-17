@@ -23,7 +23,7 @@ mod app {
 
     // Needed for scheduling monotonic tasks
     #[monotonic(binds = SysTick, default = true)]
-    type MyMono = DwtSystick<45_000_000>; // 180 MHz
+    type MyMono = DwtSystick<180_000_000>; // 180 MHz
 
     // Holds the shared resources (used by multiple tasks)
     // Needed even if we don't use it
@@ -56,7 +56,7 @@ mod app {
 
         // Set up the system clock.
         let rcc = _device.RCC.constrain();
-        let clocks = rcc.cfgr.sysclk(45.MHz()).freeze(); // Important: 45 MHz is the max for CAN since it has to match the APB1 clock
+        let clocks = rcc.cfgr.sysclk(180.MHz()).freeze(); // Important: 45 MHz is the max for CAN since it has to match the APB1 clock
 
         debug!("AHB1 clock: {} Hz", clocks.hclk().to_Hz());
         debug!("APB1 clock: {} Hz", clocks.pclk1().to_Hz());
@@ -152,6 +152,7 @@ mod app {
         info!("Sending frame with first byte: {}", test_frame[0]);
 
         ctx.shared.can1.lock(|can1| can1.transmit(&frame).unwrap());
+
     }
 
     // receive a message via CAN

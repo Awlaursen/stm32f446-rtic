@@ -108,6 +108,8 @@ mod app {
             exti.pr.read().pr13().bit_is_set()
         });
 
+        ctx.shared.exti.into();
+
         // If it's not from the button, return
         if !is_button {
             defmt::info!("not button");
