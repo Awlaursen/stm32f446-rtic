@@ -1,23 +1,27 @@
 #![no_main]
 #![no_std]
-#![deny(warnings)]
 
 use stm32f446_rtic as _; // global logger + panicking-behavior + memory layout
 
 #[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [USART1, USART2])]
 mod app {
-    use bxcan::filter::Mask32;
-    use bxcan::{Fifo, Frame, StandardId};
-    use core::sync::atomic::{AtomicUsize, Ordering};
+    use bxcan::{Data, Frame, StandardId};
+    use core::{
+        str,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
     use defmt::*;
     use dwt_systick_monotonic::{DwtSystick, ExtU32};
+    use stm32f446_rtic::can_shield::CanShield;
     use stm32f4xx_hal::{
         can::Can,
         gpio::{
             gpioa::{PA11, PA12, PA5},
+            gpiob::{PB13, PB5},
             Alternate, Output, PushPull,
         },
         pac::CAN1,
+        pac::CAN2,
         prelude::*,
     };
 
@@ -30,6 +34,7 @@ mod app {
     #[shared]
     struct Shared {
         can1: bxcan::Can<Can<CAN1, (PA12<Alternate<9>>, PA11<Alternate<9>>)>>,
+        can2: bxcan::Can<Can<CAN2, (PB13<Alternate<9>>, PB5<Alternate<9>>)>>,
     }
 
     // Holds the local resources (used by a single task)
@@ -37,7 +42,6 @@ mod app {
     #[local]
     struct Local {
         led: PA5<Output<PushPull>>,
-        test_frame: [u8; 8],
     }
 
     // Atomic counter
@@ -56,56 +60,29 @@ mod app {
 
         // Set up the system clock.
         let rcc = _device.RCC.constrain();
-        let clocks = rcc.cfgr.sysclk(180.MHz()).freeze(); // Important: 45 MHz is the max for CAN since it has to match the APB1 clock
+        let clocks = rcc.cfgr.sysclk(180.MHz()).freeze(); 
 
         debug!("AHB1 clock: {} Hz", clocks.hclk().to_Hz());
         debug!("APB1 clock: {} Hz", clocks.pclk1().to_Hz());
 
         // Set up the LED. On the Nucleo-F446RE it's connected to pin PA5.
         let gpioa = _device.GPIOA.split();
+        let gpiob = _device.GPIOB.split();
         let led = gpioa.pa5.into_push_pull_output();
 
-        // Initialize variables for can_send
-        let mut test_frame: [u8; 8] = [0; 8];
-        test_frame[0] = 'H' as u8;
-        test_frame[1] = 'e' as u8;
-        test_frame[2] = 'j' as u8;
-        test_frame[3] = 's' as u8;
-        test_frame[4] = 'a' as u8;
-        test_frame[5] = '!' as u8;
-        test_frame[6] = ' ' as u8;
-
         // Set up CAN device 1
-        let mut can1 = {
-            // CAN pins alternate function 9 as per datasheet
-            // https://www.st.com/resource/en/datasheet/stm32f446mc.pdf page 57
-            let rx = gpioa.pa11.into_alternate::<9>();
-            let tx = gpioa.pa12.into_alternate::<9>();
+        let shield = CanShield::new_rev1(
+            gpioa.pa12,
+            gpioa.pa11,
+            gpiob.pb13,
+            gpiob.pb5,
+            _device.CAN1,
+            _device.CAN2,
+        )
+        .unwrap();
 
-            // let can = Can::new(dp.CAN1, (tx, rx));
-            // or
-            let can = _device.CAN1.can((tx, rx));
-
-            info!("CAN1, waiting for 11 recessive bits...");
-            bxcan::Can::builder(can)
-                // APB1 (PCLK1): 45MHz, Bit rate: 1MBit/s, Sample Point 87.5%
-                // Value was calculated with http://www.bittiming.can-wiki.info/
-                .set_bit_timing(0x001b0002)
-                .set_automatic_retransmit(true)
-                // .set_silent(true)
-                .enable()
-        };
-
-        info!("CAN1, waiting for 11 recessive bits... (done)");
-
-        can1.enable_interrupts({
-            use bxcan::Interrupts as If;
-            If::FIFO0_MESSAGE_PENDING | If::FIFO0_FULL | If::FIFO0_OVERRUN
-        });
-
-        // Configure filters so that can frames can be received.
-        can1.modify_filters()
-            .enable_bank(0, Fifo::Fifo0, Mask32::accept_all());
+        let mut can1 = shield.can1;
+        let mut can2 = shield.can2;
 
         // enable tracing and the cycle counter for the monotonic timer
         _core.DCB.enable_trace();
@@ -116,12 +93,7 @@ mod app {
 
         info!("Init done!");
         blink::spawn_after(1.secs()).ok();
-        can_send::spawn_after(1.secs()).ok();
-        (
-            Shared { can1 },
-            Local { led, test_frame },
-            init::Monotonics(mono),
-        )
+        (Shared { can1, can2 }, Local { led }, init::Monotonics(mono))
     }
 
     // The idle function is called when there is nothing else to do
@@ -141,30 +113,61 @@ mod app {
     }
 
     // send a meesage via CAN
-    #[task(shared = [can1], local = [test_frame], priority=2)]
-    fn can_send(mut ctx: can_send::Context) {
-        let test_frame = ctx.local.test_frame;
+    #[task(shared = [can1, can2], priority=2)]
+    fn can_send(mut ctx: can_send::Context, _ch: u8, _data: Data) {
         let id: u16 = 0x500;
 
-        test_frame[7] = COUNTER.fetch_add(1, Ordering::SeqCst) as u8;
-        let frame = Frame::new_data(StandardId::new(id).unwrap(), *test_frame);
+        let frame = Frame::new_data(StandardId::new(id).unwrap(), _data);
 
-        info!("Sending frame with first byte: {}", test_frame[0]);
+        info!(
+            "Sending frame: {}",
+            str::from_utf8(&frame.clone().data().unwrap()).unwrap_or("Invalid UTF-8")
+        );
 
-        ctx.shared.can1.lock(|can1| can1.transmit(&frame).unwrap());
+        // Send the frame
+        match _ch {
+            1 => {
+                ctx.shared.can1.lock(|can1| can1.transmit(&frame).unwrap());
+            }
+            2 => {
+                ctx.shared.can2.lock(|can2| can2.transmit(&frame).unwrap());
+            }
+            _ => {
+                error!("Invalid channel");
+            }
+        }
     }
 
-    // receive a message via CAN
+    // receive a message via CAN1
     #[task(binds = CAN1_RX0, shared = [can1])]
-    fn can_receive(ctx: can_receive::Context) {
+    fn can1_receive(ctx: can1_receive::Context) {
         let mut can1 = ctx.shared.can1;
         let frame = can1.lock(|can1| can1.receive().unwrap());
 
+        let data = frame.data().unwrap();
+
         info!(
-            "Received frame with first byte: {}",
-            frame.data().unwrap().first().unwrap()
+            "Received frame: {}",
+            str::from_utf8(data).unwrap_or("Invalid UTF-8")
         );
 
-        can_send::spawn().ok();
+        can_send::spawn(1, data.clone()).ok();
+    }
+
+    // receive a message via CAN2
+    // Note: CAN2_RX1 is used instead of CAN2_RX0 because CAN2 is set up to use FIFO 1 in the CanShield implementation
+    #[task(binds = CAN2_RX1, shared = [can2])]
+    fn can2_receive(ctx: can2_receive::Context) {
+        let mut can2 = ctx.shared.can2;
+        let frame = can2.lock(|can2| can2.receive().unwrap());
+
+        let data = frame.data().unwrap();
+
+        info!(
+            "Received frame: {}",
+            str::from_utf8(data).unwrap_or("Invalid UTF-8")
+        );
+
+        can_send::spawn(2, data.clone()).ok();
     }
 }

@@ -31,3 +31,18 @@ features = [
     "rtic",
     "can",
 ]
+
+[dev-dependencies]
+defmt-test = "0.3.0" # Logging framework for tests
+
+# This is needed to run `cargo test` on the host
+[lib]
+test = false
+
+[[test]]
+name = "should_pass"
+harness = false
+
+[[test]]
+name = "can_test"
+harness = false
