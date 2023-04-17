@@ -6,33 +6,35 @@ use fugit as _;
 use panic_probe as _; // panic handler
 use stm32f4xx_hal as _; // memory layout // time abstractions
 
-pub mod CanShield {
-    use bxcan::filter::Mask32;
+pub mod can_shield {
+    use bxcan::{filter::Mask32, Fifo};
+    use defmt::info;
     use stm32f4xx_hal::{
-        gpio::gpioa::{self, Parts},
-        pac::{self, Peripherals},
+        can::Can,
+        gpio::{Alternate, PA11, PA12, PB13, PB5},
+        pac::{CAN1, CAN2},
         prelude::_stm32f4xx_hal_can_CanExt,
     };
 
     pub struct CanShield {
-        can1: bxcan::Can<stm32f4xx_hal::pac::CAN1>,
-        can2: bxcan::Can<stm32f4xx_hal::pac::CAN2>,
+        pub can1: bxcan::Can<Can<CAN1, (PA12<Alternate<9>>, PA11<Alternate<9>>)>>,
+        pub can2: bxcan::Can<Can<CAN2, (PB13<Alternate<9>>, PB5<Alternate<9>>)>>,
     }
 
-    pub impl CanShield {
-        // pub fn new(
-        //     can1: bxcan::Can<stm32f4xx_hal::pac::CAN1>,
-        //     can2: bxcan::Can<stm32f4xx_hal::pac::CAN2>,
-        // ) -> Self {
-        //     Self { can1, can2 }
-        // }
-
-        pub fn new_rev1(device: pac::Peripherals, gpioa: Parts, gpiob: Parts) -> CanShield {
+    impl CanShield {
+        pub fn new_rev1(
+            pa12: PA12,
+            pa11: PA11,
+            pb13: PB13,
+            pb5:  PB5,
+            can1 : CAN1,
+            can2 : CAN2,
+        ) -> Result<Self, ()> {
             let mut can1 = {
-                let rx = gpioa.pa11.into_alternate::<9>();
-                let tx = gpioa.pa12.into_alternate::<9>();
+                let rx = pa11.into_alternate::<9>();
+                let tx = pa12.into_alternate::<9>();
 
-                let can = device.CAN1.can((tx, rx));
+                let can = can1.can((tx, rx));
 
                 info!("CAN1, waiting for 11 recessive bits...");
                 bxcan::Can::builder(can)
@@ -48,15 +50,14 @@ pub mod CanShield {
                 If::FIFO0_MESSAGE_PENDING | If::FIFO0_FULL | If::FIFO0_OVERRUN
             });
 
-            let mut filters =
-                can1.modify_filters()
-                    .enable_bank(0, Fifo::Fifo0, Mask32::accept_all());
+            let mut binding = can1.modify_filters();
+            let filters = binding.enable_bank(0, Fifo::Fifo0, Mask32::accept_all());
 
             let mut can2 = {
-                let rx = gpiob.pb5.into_alternate::<9>();
-                let tx = gpiob.pb13.into_alternate::<9>();
+                let rx = pb5.into_alternate::<9>();
+                let tx = pb13.into_alternate::<9>();
 
-                let can = device.CAN2.can((tx, rx));
+                let can = can2.can((tx, rx));
 
                 info!("CAN2, waiting for 11 recessive bits...");
                 bxcan::Can::builder(can)
@@ -69,7 +70,7 @@ pub mod CanShield {
 
             can2.enable_interrupts({
                 use bxcan::Interrupts as If;
-                If::FIFO0_MESSAGE_PENDING | If::FIFO0_FULL | If::FIFO0_OVERRUN
+                If::FIFO1_MESSAGE_PENDING | If::FIFO1_FULL | If::FIFO1_OVERRUN
             });
 
             filters.set_split(14).slave_filters().enable_bank(
@@ -78,11 +79,11 @@ pub mod CanShield {
                 Mask32::accept_all(),
             );
 
-            // Drop filters to leave filter configuraiton mode.
+            // Drop filters and binding to move the CAN instances into the `CanShield` struct.
             drop(filters);
+            drop(binding);
 
-            &mut Self { can1, can2 }
-    
+            Ok(Self { can1, can2 })
         }
 
         // pub fn can1(&mut self) -> &mut bxcan::Can<stm32f4xx_hal::pac::CAN1> {
