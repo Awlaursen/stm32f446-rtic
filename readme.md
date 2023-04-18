@@ -1,4 +1,2 @@
 # AAUSAT RUST
-
-# links
-[Arm GNU Toolchain Downloads](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads)
+This repository has been moved to [aausat/a6libcommon](https://github.com/aausat/a6libcommon)
